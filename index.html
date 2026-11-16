@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calculator</title>
+<style>
+  :root {
+    --bg1: #0b1020;
+    --bg2: #1b2a5a;
+    --orange-top: #f9a63a;
+    --orange-bot: #e8730c;
+    --fn-top: #8c96a6;
+    --fn-bot: #5a6474;
+    --num-top: #4a4f58;
+    --num-bot: #2b2e35;
+    --line: #14161a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at 30% 20%, var(--bg2), var(--bg1) 70%);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #fff;
+  }
+  #scene {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; z-index: 0;
+  }
+  .stage {
+    position: fixed; inset: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    padding: env(safe-area-inset-top, 0) 0 env(safe-area-inset-bottom, 0);
+  }
+
+  /* ---------- Calculator (iPhone 5 / iOS 6 look) ---------- */
+  .calc {
+    pointer-events: auto;
+    width: min(94vw, calc(88vh * 0.62), 420px);
+    height: min(88vh, 680px);
+    display: flex; flex-direction: column;
+    background: #000;
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 0 0 2px #2a2d33, 0 0 0 5px #0a0b0d, 0 30px 80px rgba(0,0,0,.65);
+  }
+  .display {
+    flex: 0 0 26%;
+    position: relative;
+    display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end;
+    padding: 10px 16px 6px;
+    background: linear-gradient(#050608, #12161c 60%, #1c222b);
+    border-bottom: 1px solid #000;
+    overflow: hidden;
+  }
+  .display::after {
+    content: ""; position: absolute; inset: 0 0 50% 0;
+    background: linear-gradient(rgba(255,255,255,.07), rgba(255,255,255,0));
+    pointer-events: none;
+  }
+  .trace {
+    min-height: 1.3em; max-width: 100%;
+    font-size: clamp(11px, 1.9vh, 14px);
+    color: #8fa0b8; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .value {
+    font-weight: 200; line-height: 1.05;
+    font-size: clamp(44px, 9vh, 76px);
+    letter-spacing: -1px;
+    max-width: 100%; white-space: nowrap;
+  }
+  .status {
+    position: absolute; top: 8px; left: 14px;
+    font-size: 11px; color: #6f7d92;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #e0a82e; }
+  .dot.ready { background: #38c172; }
+  .dot.fallback { background: #e0a82e; }
+  .dot.fail { background: #e3342f; }
+
+  .keys {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border-top: 1px solid #000;
+  }
+  .key {
+    appearance: none; border: 0; margin: 0; padding: 0; border-radius: 0;
+    font: inherit; font-size: clamp(22px, 4.2vh, 34px); font-weight: 400;
+    color: #fff; cursor: pointer;
+    background: linear-gradient(var(--num-top), var(--num-bot));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 -1px 0 rgba(0,0,0,.35);
+    text-shadow: 0 -1px 0 rgba(0,0,0,.55);
+    transition: filter .08s;
+  }
+  .key:active { filter: brightness(.7); }
+  .key:focus-visible { outline: 2px solid #7cc4ff; outline-offset: -3px; }
+  .key.fn { background: linear-gradient(var(--fn-top), var(--fn-bot)); }
+  .key.op { background: linear-gradient(var(--orange-top), var(--orange-bot)); font-size: clamp(26px, 5vh, 40px); }
+  .key.op.active { background: #fff; color: var(--orange-bot); text-shadow: none; }
+  .key.zero { grid-column: span 2; text-align: left; padding-left: 8%; }
+  .key.eq { background: linear-gradient(var(--orange-top), var(--orange-bot)); }
+
+  @media (max-width: 520px) {
+    .calc { width: 100vw; height: 100dvh; border-radius: 0; box-shadow: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .key { transition: none; } }
+</style>
+</head>
+<body>
+
+<canvas id="scene" aria-hidden="true"></canvas>
+
+<main class="stage">
+  <section class="calc" aria-label="Calculator">
+    <div class="display" aria-live="polite">
+      <div class="status"><span class="dot" id="dot"></span><span id="statusText">Loading Python…</span></div>
+      <div class="trace" id="trace"></div>
+      <div class="value" id="value">0</div>
+    </div>
+    <div class="keys" id="keys">
+      <button class="key fn" data-k="C">C</button>
+      <button class="key fn" data-k="neg">±</button>
+      <button class="key fn" data-k="pct">%</button>
+      <button class="key op" data-k="op4">÷</button>
+
+      <button class="key" data-k="7">7</button>
+      <button class="key" data-k="8">8</button>
+      <button class="key" data-k="9">9</button>
+      <button class="key op" data-k="op3">×</button>
+
+      <button class="key" data-k="4">4</button>
+      <button class="key" data-k="5">5</button>
+      <button class="key" data-k="6">6</button>
+      <button class="key op" data-k="op2">−</button>
+
+      <button class="key" data-k="1">1</button>
+      <button class="key" data-k="2">2</button>
+      <button class="key" data-k="3">3</button>
+      <button class="key op" data-k="op1">+</button>
+
+      <button class="key zero" data-k="0">0</button>
+      <button class="key" data-k=".">.</button>
+      <button class="key eq" data-k="=">=</button>
+    </div>
+  </section>
+</main>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+/* =====================================================================
+   1. PYTHON BRIDGE — runs your real Dashboard.py and Calculation.py
+   ===================================================================== */
+const PY_FILES = {
+  // Tried in this order; the first one that loads wins.
+  Calculation: ["Requirements/Calculation.py", "Calculation.py"],
+  Dashboard:   ["Requirements/Dashboard.py",   "Dashboard.py"]
+};
+
+// Built-in copies, used only if the .py files can't be fetched (e.g. opened via file://)
+const PY_FALLBACK = {
+  Calculation: `def add(a,b):
+    print(f"Sum: {a} + {b} = {a+b}")
+
+
+def sub(a, b):
+    print(f"Difference: {a} - {b} = {a-b}")
+
+
+def mul(a, b):
+    print(f"Product: {a} * {b} = {a*b}")
+
+
+def div(a, b):
+    try:
+        print(f"Quotient: {a//b}, Remainder: {a%b}")
+    except:
+        print("Division by 0 is not possible.")
+`,
+  Dashboard: `def menu():
+    a = float(input("Enter first number: "))
+    b = float(input("Enter the second number:" ""))
+    print("""
+Choose an operation from the list:
+1. Addition
+2. Subtraction
+3. Multiplication
+4. Division with remainder
+    """)
+    op = int(input("Enter your choice: "))
+    return a, b, op
+`
+};
+
+// Glue code: feeds the browser inputs to Dashboard.menu() and captures what Calculation prints
+const PY_GLUE = `
+import sys, io, builtins, contextlib
+sys.path.insert(0, "/home/pyodide/calc")
+import Dashboard, Calculation as cal
+
+def run_calculator(a, b, op):
+    answers = iter([str(a), str(b), str(op)])
+    builtins.input = lambda prompt="": next(answers)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        x, y, choice = Dashboard.menu()
+        buf.seek(0); buf.truncate(0)          # drop the menu text, keep only the result
+        if choice == 1:   cal.add(x, y)
+        elif choice == 2: cal.sub(x, y)
+        elif choice == 3: cal.mul(x, y)
+        elif choice == 4: cal.div(x, y)
+    return buf.getvalue().strip()
+`;
+
+let pyRun = null;      // function(a, b, op) -> Promise<string>
+let usingFallback = false;
+
+const dot = document.getElementById("dot");
+const statusText = document.getElementById("statusText");
+function setStatus(kind, text) { dot.className = "dot " + kind; statusText.textContent = text; }
+
+async function fetchFirst(paths) {
+  for (const p of paths) {
+    try {
+      const r = await fetch(p, { cache: "no-cache" });
+      if (r.ok) return await r.text();
+    } catch (e) { /* try next */ }
+  }
+  return null;
+}
+
+async function bootPython() {
+  try {
+    const py = await loadPyodide();
+    py.FS.mkdirTree("/home/pyodide/calc");
+    for (const name of Object.keys(PY_FILES)) {
+      let src = await fetchFirst(PY_FILES[name]);
+      if (src === null) { src = PY_FALLBACK[name]; usingFallback = true; }
+      py.FS.writeFile(`/home/pyodide/calc/${name}.py`, src);
+    }
+    await py.runPythonAsync(PY_GLUE);
+    const fn = py.globals.get("run_calculator");
+    pyRun = async (a, b, op) => fn(a, b, op);
+    setStatus(usingFallback ? "fallback" : "ready",
+              usingFallback ? "Python ready (built-in copy)" : "Python ready");
+  } catch (err) {
+    console.error(err);
+    setStatus("fail", "Python failed to load");
+  }
+}
+bootPython();
+
+/* =====================================================================
+   2. CALCULATOR UI LOGIC (iPhone-style entry, math done in Python)
+   ===================================================================== */
+const valueEl = document.getElementById("value");
+const traceEl = document.getElementById("trace");
+const SYMBOL = { 1: "+", 2: "−", 3: "×", 4: "÷" };
+
+let entry = "0";        // what the user is typing
+let left = null;        // first operand
+let op = null;          // pending operation (1-4)
+let fresh = true;       // next digit starts a new number
+let busy = false;
+
+function fmt(n) {
+  if (!isFinite(n)) return "Error";
+  let s = String(parseFloat(Number(n).toPrecision(10)));
+  if (s.includes("e")) s = Number(n).toExponential(4);
+  return s;
+}
+function show(text) {
+  valueEl.textContent = text.length > 9 && !text.includes("e") && text !== "Error"
+    ? Number(text).toLocaleString("en-US", { maximumFractionDigits: 6 }) : text;
+  // shrink long numbers so they always fit
+  valueEl.style.fontSize = "";
+  const max = valueEl.parentElement.clientWidth - 32;
+  let size = parseFloat(getComputedStyle(valueEl).fontSize);
+  while (valueEl.scrollWidth > max && size > 18) { size -= 2; valueEl.style.fontSize = size + "px"; }
+}
+function markOp() {
+  document.querySelectorAll(".key.op").forEach(b =>
+    b.classList.toggle("active", op !== null && fresh && b.dataset.k === "op" + op));
+}
+
+async function compute(a, b, opCode) {
+  if (!pyRun) { traceEl.textContent = "Python is still loading…"; return null; }
+  const out = await pyRun(a, b, opCode);
+  if (/Division by 0/i.test(out)) return { value: "Error", trace: out };
+  if (opCode === 4) {
+    const m = out.match(/Quotient:\s*(\S+?),\s*Remainder:\s*(\S+)/);
+    return m ? { value: fmt(parseFloat(m[1])), trace: out } : { value: "Error", trace: out };
+  }
+  const m = out.match(/=\s*(\S+)\s*$/);
+  return m ? { value: fmt(parseFloat(m[1])), trace: out } : { value: "Error", trace: out };
+}
+
+async function evaluate() {
+  if (op === null || left === null) return false;
+  busy = true;
+  const res = await compute(parseFloat(left), parseFloat(entry), op);
+  busy = false;
+  if (!res) return false;
+  traceEl.textContent = res.trace;
+  entry = res.value; left = null; op = null; fresh = true;
+  show(entry); markOp();
+  if (entry === "Error") { entry = "0"; }
+  return true;
+}
+
+async function press(k) {
+  if (busy) return;
+  if (/^[0-9]$/.test(k)) {
+    const d = k;
+    if (fresh) { entry = d; fresh = false; }
+    else if (entry.replace(/[-.]/g, "").length < 12) entry = entry === "0" ? d : entry + d;
+    show(entry); markOp(); return;
+  }
+  switch (k) {
+    case ".":
+      if (fresh) { entry = "0."; fresh = false; }
+      else if (!entry.includes(".")) entry += ".";
+      show(entry); break;
+    case "C":
+      entry = "0"; left = null; op = null; fresh = true; traceEl.textContent = "";
+      show(entry); markOp(); break;
+    case "neg":
+      if (entry !== "0") entry = entry.startsWith("-") ? entry.slice(1) : "-" + entry;
+      show(entry); break;
+    case "pct":
+      entry = fmt(parseFloat(entry) / 100); fresh = true; show(entry); break;
+    case "=":
+      await evaluate(); break;
+    case "op1": case "op2": case "op3": case "op4": {      // operators
+      if (op !== null && !fresh) await evaluate();  // chain: 2 + 3 + → 5 +
+      left = entry; op = parseInt(k.slice(2), 10); fresh = true;
+      traceEl.textContent = `${left} ${SYMBOL[op]}`;
+      markOp(); break;
+    }
+  }
+}
+
+document.getElementById("keys").addEventListener("click", e => {
+  const b = e.target.closest(".key"); if (b) press(b.dataset.k);
+});
+
+// Keyboard support
+window.addEventListener("keydown", e => {
+  const map = { "+": "op1", "-": "op2", "*": "op3", "x": "op3", "/": "op4", ".": ".", ",": ".",
+                "Enter": "=", "=": "=", "Escape": "C", "c": "C", "C": "C", "%": "pct" };
+  if (/^[0-9]$/.test(e.key)) { press(e.key); return; }
+  if (map[e.key]) { e.preventDefault(); press(map[e.key]); }
+  if (e.key === "Backspace" && !fresh) {
+    entry = entry.length > 1 ? entry.slice(0, -1) : "0"; if (entry === "-") entry = "0"; show(entry);
+  }
+});
+show(entry);
+
+/* =====================================================================
+   3. 3D BACKGROUND — fills the whole page; shapes react to hover
+   ===================================================================== */
+(function scene3D() {
+  const canvas = document.getElementById("scene");
+  if (!window.THREE) return;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); }
+  catch (e) { return; }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+  camera.position.z = 14;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const key = new THREE.DirectionalLight(0xffffff, 0.9); key.position.set(5, 8, 10); scene.add(key);
+  const rim = new THREE.PointLight(0xf9a63a, 1.2, 40); rim.position.set(-8, -4, 6); scene.add(rim);
+
+  // Star field so no area of the page is ever empty
+  const starGeo = new THREE.BufferGeometry();
+  const N = 700, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    pos[i*3] = (Math.random() - .5) * 60; pos[i*3+1] = (Math.random() - .5) * 40; pos[i*3+2] = -Math.random() * 25;
+  }
+  starGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0x9db4ff, size: 0.08, transparent: true, opacity: .8 }));
+  scene.add(stars);
+
+  // Hoverable shapes. nx/ny are positions in -1..1 screen space.
+  // mode: 'stretch' | 'squeeze' | 'spin'
+  const defs = [
+    { geo: new THREE.TorusKnotGeometry(1, .32, 120, 16), color: 0xf9a63a, nx: -.82, ny:  .72, mode: "stretch" },
+    { geo: new THREE.IcosahedronGeometry(1.2, 0),         color: 0x4da3ff, nx:  .84, ny:  .66, mode: "spin" },
+    { geo: new THREE.TorusGeometry(1, .38, 20, 60),        color: 0xff5d8f, nx: -.86, ny: -.18, mode: "squeeze" },
+    { geo: new THREE.OctahedronGeometry(1.2, 0),           color: 0x38c172, nx:  .88, ny: -.12, mode: "stretch" },
+    { geo: new THREE.BoxGeometry(1.6, 1.6, 1.6),           color: 0xb583ff, nx: -.7,  ny: -.8,  mode: "spin" },
+    { geo: new THREE.ConeGeometry(1, 2, 5),               color: 0xffd23f, nx:  .72, ny: -.78, mode: "squeeze" },
+    { geo: new THREE.DodecahedronGeometry(1.0, 0),         color: 0x2ee6d6, nx:  0,   ny:  .93, mode: "stretch" },
+    { geo: new THREE.SphereGeometry(.9, 24, 16),           color: 0xff8a4d, nx:  0,   ny: -.93, mode: "squeeze" }
+  ];
+  const items = defs.map(d => {
+    const group = new THREE.Group();
+    const solid = new THREE.Mesh(d.geo, new THREE.MeshStandardMaterial({ color: d.color, metalness: .55, roughness: .3 }));
+    const wire = new THREE.Mesh(d.geo, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: .18 }));
+    wire.scale.setScalar(1.015);
+    group.add(solid, wire);
+    group.userData = { mode: d.mode, nx: d.nx, ny: d.ny, hover: false, spin: new THREE.Vector3(.004, .006, .002),
+                       phase: Math.random() * 6.28, base: 1, targetScale: new THREE.Vector3(1,1,1), pick: solid };
+    group.rotation.set(Math.random() * 3, Math.random() * 3, 0);
+    scene.add(group);
+    return group;
+  });
+
+  function layout() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    const halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.position.z;
+    const halfW = halfH * camera.aspect;
+    const small = Math.min(halfW, halfH);
+    items.forEach(g => {
+      g.position.set(g.userData.nx * halfW * .92, g.userData.ny * halfH * .86, 0);
+      g.userData.base = Math.max(.55, Math.min(1.25, small / 7));
+    });
+  }
+  layout(); addEventListener("resize", layout);
+
+  // Hover detection
+  const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(-9, -9);
+  let px = 0, py = 0;
+  addEventListener("pointermove", e => {
+    mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    px = mouse.x; py = mouse.y;
+  });
+  addEventListener("pointerleave", () => mouse.set(-9, -9));
+
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const clock = new THREE.Clock();
+  (function tick() {
+    requestAnimationFrame(tick);
+    const t = clock.getElapsedTime();
+
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(items.map(g => g.userData.pick));
+    const hovered = hits.length ? hits[0].object.parent : null;
+    document.body.style.cursor = "";
+
+    items.forEach(g => {
+      const u = g.userData;
+      u.hover = g === hovered;
+      // Target scale by mode
+      let target = new THREE.Vector3(1, 1, 1);
+      if (u.hover) {
+        if (u.mode === "stretch") target.set(.7, 1.9, .7);
+        else if (u.mode === "squeeze") target.set(.45, .45, .45);
+        else target.set(1.25, 1.25, 1.25);
+      }
+      target.multiplyScalar(u.base);
+      g.scale.lerp(target, .12);
+
+      // Spin faster while hovered, idle drift otherwise
+      const speed = u.hover ? (u.mode === "spin" ? 1.2 : 0.5) : (reduce ? 0 : 1);
+      g.rotation.x += u.spin.x * (u.hover ? speed * 10 : 1) * (reduce ? 0 : 1);
+      g.rotation.y += u.spin.y * (u.hover ? speed * 10 : 1) * (reduce ? 0 : 1);
+      g.rotation.z += u.spin.z * (u.hover ? speed * 10 : 1) * (reduce ? 0 : 1);
+      if (!reduce) g.position.y += Math.sin(t + u.phase) * 0.0025;
+    });
+
+    if (!reduce) { stars.rotation.y = t * 0.012; }
+    camera.position.x += (px * 0.8 - camera.position.x) * 0.04;
+    camera.position.y += (py * 0.5 - camera.position.y) * 0.04;
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+  })();
+})();
+</script>
+</body>
+</html>
